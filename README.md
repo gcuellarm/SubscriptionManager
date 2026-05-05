@@ -1,41 +1,41 @@
 # SubscriptionManager
 
-Protocolo base en Solidity para manejar suscripciones recurrentes con ERC20.
+Base Solidity protocol for managing recurring subscriptions with ERC20 tokens.
 
-## Estado actual
+## Current status
 
-El proyecto quedó **inicializado con una base funcional**, no con la implementación completa final.
+The project has been **initialized with a functional base**, not with the complete final implementation.
 
-Hoy incluye:
+It currently includes:
 
-- contrato base `SubscriptionManager`
-- creación y activación/desactivación de planes
-- suscripción de usuarios a un plan
-- cobro recurrente usando `transferFrom` sobre un ERC20
-- transición a estado `PAST_DUE` si no hay balance o allowance suficiente
-- cancelación de suscripción
-- script mínimo de deploy
-- tests base de creación de plan y suscripción
+- base `SubscriptionManager` contract
+- plan creation and plan activation/deactivation
+- user subscription to a plan
+- recurring charges using `transferFrom` on an ERC20 token
+- transition to `PAST_DUE` status when there is not enough balance or allowance
+- subscription cancellation
+- minimal deploy script
+- base tests for plan creation and subscription
 
-## Idea del protocolo
+## Protocol idea
 
-Un proveedor publica un plan:
+A provider publishes a plan:
 
-- token ERC20 a cobrar
-- precio por período
-- intervalo de cobro
+- ERC20 token to charge
+- price per period
+- billing interval
 
-Luego un usuario se suscribe y autoriza al contrato. Cuando llega `nextChargeAt`, el proveedor puede ejecutar el cobro.
+Then a user subscribes and authorizes the contract. When `nextChargeAt` is reached, the provider can execute the charge.
 
-## Arquitectura base
+## Base architecture
 
-### Entidades principales
+### Main entities
 
 #### Plan
 
-Representa la oferta publicada por un proveedor.
+Represents the offer published by a provider.
 
-Campos principales:
+Main fields:
 
 - `provider`
 - `token`
@@ -45,65 +45,65 @@ Campos principales:
 
 #### Subscription
 
-Representa la relación entre un usuario y un plan.
+Represents the relationship between a user and a plan.
 
-Campos principales:
+Main fields:
 
 - `startedAt`
 - `nextChargeAt`
 - `status`
 
-#### Estados
+#### Statuses
 
 - `NONE`
 - `ACTIVE`
 - `PAST_DUE`
 - `CANCELED`
 
-## Contrato actual
+## Current contract
 
-Archivo: `src/SubscriptionManager.sol`
+File: `src/SubscriptionManager.sol`
 
-### Funciones disponibles
+### Available functions
 
 - `createPlan(address token, uint256 pricePerInterval, uint256 interval)`
 - `setPlanStatus(uint256 planId, bool active)`
 - `subscribe(uint256 planId)`
 - `chargeSubscription(uint256 planId, address subscriber)`
-  - revierte con `ChargeNotDue()` si todavía no llegó el momento del cobro
+  - reverts with `ChargeNotDue()` if the charge is not due yet
 - `cancelSubscription(uint256 planId)`
 - `getSubscriptionStatus(uint256 planId, address subscriber)`
 
-## Decisiones tomadas en esta base
+## Decisions made in this base
 
-### 1. El cobro lo ejecuta el provider
+### 1. Charges are executed by the provider
 
-Esto sigue el modelo planteado en `Task.md`: el usuario autoriza, pero quien dispara el cobro es el proveedor.
+This follows the model described in `Task.md`: the user authorizes the contract, but the provider triggers the charge.
 
-### 2. Si el cobro falla, la suscripción pasa a `PAST_DUE`
+### 2. If the charge fails, the subscription moves to `PAST_DUE`
 
-En vez de asumir que todo revierte y nada más, la base ya modela el estado de deuda/impago.
+Instead of assuming everything simply reverts and nothing else happens, this base already models the debt/non-payment state.
 
-### 3. No agregué fee de protocolo ni factory todavía
+### 3. I have not added a protocol fee or factory yet
 
-Eso es una decisión correcta PARA ESTA ETAPA. Primero hay que cerrar bien el flujo núcleo antes de meter complejidad adicional.
+That is the right decision FOR THIS STAGE. First, the core flow needs to be properly closed before adding extra complexity.
 
-## Qué falta
+## What is missing
 
-Esto todavía NO cubre:
+This still does NOT cover:
 
-- reactivación de suscripciones vencidas
-- fee del protocolo
-- factory de planes o providers
-- sistema de múltiples planes premium/basic/etc.
-- pausas más finas
-- control de reintentos de cobro
-- tests de fuzz
-- tests de invariantes
-- mocks ERC20 para escenarios completos de cobro
-- hardening de seguridad y gas optimization
+- reactivation of expired subscriptions
+- protocol fee
+- plan or provider factory
+- multiple plan system, such as premium/basic/etc.
+- more granular pause controls
+- charge retry control
+- fuzz tests
+- invariant tests
+- ERC20 mocks for complete charge scenarios
+- security hardening and gas optimization
 
-## Estructura del proyecto
+## Project structure
 
 ```txt
 src/
@@ -114,11 +114,11 @@ test/
   SubscriptionManager.t.sol
 ```
 
-## Desarrollo
+## Development
 
-### Instalar dependencias
+### Install dependencies
 
-Este repo ya viene preparado para usar `forge-std` como submodule.
+This repo is already prepared to use `forge-std` as a submodule.
 
 ### Tests
 
@@ -126,19 +126,19 @@ Este repo ya viene preparado para usar `forge-std` como submodule.
 forge test
 ```
 
-### Formato
+### Formatting
 
 ```bash
 forge fmt
 ```
 
-## Siguiente paso recomendado
+## Recommended next step
 
-El siguiente paso sano NO es agregar features al azar.
+The healthy next step is NOT to add random features.
 
-Primero hay que hacer esto:
+First, this needs to be done:
 
-1. agregar un `MockERC20`
-2. testear el flujo completo de `chargeSubscription`
-3. cubrir `PAST_DUE`
-4. recién después evaluar fees, factory e invariants
+1. add a `MockERC20`
+2. test the full `chargeSubscription` flow
+3. cover `PAST_DUE`
+4. only then evaluate fees, factory, and invariants
