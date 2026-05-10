@@ -41,6 +41,12 @@ contract SubscriptionManagerTest is Test {
         uint256 nextPaymentDue
     );
 
+    event SubscriptionCancelled(
+        uint256 indexed subscriptionId,
+        uint256 indexed planId,
+        address indexed subscriber
+    );
+
     function setUp() public {
         manager = new SubscriptionManager();
         mockToken = new MockERC20("Mock USDC", "mUSDC", 6);
@@ -234,7 +240,7 @@ contract SubscriptionManagerTest is Test {
         assertEq(subscription.planId, planId);
         assertEq(subscription.subscriber, subscriber);
         assertEq(subscription.nextPaymentDue, expectedNextPaymentDue);
-        assertTrue(subscription.isActive);
+        assertEq(uint256(subscription.status), uint256(SubscriptionManager.SubscriptionStatus.ACTIVE));
     }
 
     function test_SubscribeTransfersInitialPaymentToProvider() public{
@@ -330,8 +336,8 @@ contract SubscriptionManagerTest is Test {
         assertEq(subscription1.subscriber, subscriber);
         assertEq(subscription2.subscriber, anotherSubscriber);
 
-        assertTrue(subscription1.isActive);
-        assertTrue(subscription2.isActive);
+        assertEq(uint256(subscription1.status), uint256(SubscriptionManager.SubscriptionStatus.ACTIVE));
+        assertEq(uint256(subscription2.status), uint256(SubscriptionManager.SubscriptionStatus.ACTIVE));
     }
 
     function test_MultipleSubscriptionsHaveIncrementalIds() public {
@@ -506,6 +512,105 @@ contract SubscriptionManagerTest is Test {
         
         manager.charge(subscriptionId);
     }
+    ////////////////////////////////////////////////////////
+    // CANCEL SUBSCRIPTION TESTS
+    ////////////////////////////////////////////////////////
 
+    function test_CancelSubscriptionSetsInactive() public {
+        uint256 subscriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        vm.prank(subscriber);
+        manager.cancelSubscription(subscriptionId);
+        
+        SubscriptionManager.Subscription memory subscription = manager.getSubscription(subscriptionId);
+        assertEq(uint256(subscription.status), uint256(SubscriptionManager.SubscriptionStatus.CANCELLED));
+    }
+
+    function test_CancelSubscriptionEmitsEvent() public {
+        uint256 subscriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        SubscriptionManager.Subscription memory subscription = manager.getSubscription(subscriptionId);
+
+        vm.expectEmit(true, true, true, true);
+        emit SubscriptionCancelled(subscriptionId, subscription.planId, subscription.subscriber);
+
+        vm.prank(subscriber);
+        manager.cancelSubscription(subscriptionId);
+    }
+
+    function test_RevertIf_CancelInvalidSubscription() public {
+        vm.prank(subscriber);
+        vm.expectRevert(SubscriptionManager.InvalidSubscription.selector);
+        manager.cancelSubscription(1);
+    }
+
+    function test_RevertIf_NonSubscriberCancels() public {
+        uint256 subscriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        vm.prank(anotherSubscriber);
+        vm.expectRevert(SubscriptionManager.Unauthorized.selector);
+        manager.cancelSubscription(subscriptionId);
+    }
+
+    function test_RevertIf_CancelAlreadyInactiveSubscription() public {
+        uint256 subscriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        vm.prank(subscriber);
+        manager.cancelSubscription(subscriptionId);
+
+        vm.prank(subscriber);
+        vm.expectRevert(SubscriptionManager.SubscriptionNotActive.selector);
+        manager.cancelSubscription(subscriptionId);
+    }
+
+    function test_RevertIf_ChargeCancelledSubscription() public {
+        uint256 subscriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        vm.prank(subscriber);
+        manager.cancelSubscription(subscriptionId);
+
+        SubscriptionManager.Subscription memory subscription = manager.getSubscription(subscriptionId);
+
+        vm.warp(subscription.nextPaymentDue);
+        
+        vm.prank(provider);
+        vm.expectRevert(SubscriptionManager.SubscriptionNotActive.selector);
+        manager.charge(subscriptionId);
+    }
+
+    //////////////////////////////////////////////////
+    // Plan Activation/Deactivation Tests
+    //////////////////////////////////////////////////
+    function test_DeactivatePlan() public {
+        
+    }
+
+    function test_ActivatePlan() public {
+        
+    }
+
+    function test_RevertIf_NonProviderDeactivatesPlan() public {
+        
+    }
+
+    function test_RevertIf_NonProviderActivatesPlan() public {
+        
+    }
+
+    function test_RevertIf_DeactivateInvalidPlan() public {
+        
+    }
+
+    function test_RevertIf_ActivateInvalidPlan() public {
+        
+    }
+
+    function test_RevertIf_SubscribeToInactivePlan() public {
+        
+    }
+
+    function test_ExistingSubscriptionCanStillBeChargedAfterPlanDeactivation() public {
+        
+    }
 
 }

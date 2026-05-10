@@ -19,7 +19,9 @@ contract SubscriptionManager {
         NONE,
         ACTIVE,
         PAST_DUE,
-        CANCELED
+        EXPIRED,
+        PAUSED,
+        CANCELLED
     }
 
     struct Plan {
@@ -35,7 +37,7 @@ contract SubscriptionManager {
         uint256 planId;
         address subscriber;
         uint256 nextPaymentDue;
-        bool isActive;
+        SubscriptionStatus status;
     }
 
     error InvalidAddress();
@@ -62,7 +64,7 @@ contract SubscriptionManager {
     event Subscribed(uint256 indexed subscriptionId, uint256 indexed planId, address indexed subscriber, uint256 nextPaymentDue);
     event SubscriptionCharged(uint256 indexed subscriptionId,uint256 indexed planId, address indexed subscriber, uint256 amount, uint256 nextChargeAt);
     event SubscriptionPastDue(uint256 indexed planId, address indexed subscriber);
-    event SubscriptionCanceled(uint256 indexed planId, address indexed subscriber);
+    event SubscriptionCancelled(uint256 indexed subscriptionId, uint256 indexed planId, address indexed subscriber);
     event Charged(uint256 indexed subscriptionId, uint256 indexed planId, address indexed subscriber, uint256 amount, uint256 nextPaymentDue);
 
 
@@ -84,12 +86,6 @@ contract SubscriptionManager {
         emit PlanCreated(planId, msg.sender, token, pricePerInterval, interval, metadataURI);
     }
 
-    function getPlan(uint256 planId) external view returns (Plan memory){
-        if (planId == 0 || planId > nextPlanId) revert InvalidPlan();
-
-        return plans[planId];
-    }
-
     function subscribe(uint256 planId) external returns (uint256 subscriptionId) {
         if (planId == 0 || planId > nextPlanId) revert InvalidPlan();
 
@@ -109,24 +105,19 @@ contract SubscriptionManager {
             planId: planId,
             subscriber: msg.sender,
             nextPaymentDue: nextPaymentDue,
-            isActive: true
+            status: SubscriptionStatus.ACTIVE
         });
+        
 
         emit Subscribed(subscriptionId, planId, msg.sender, nextPaymentDue);
     }
 
-    function getSubscription(uint256 subscriptionId) external view returns(Subscription memory) {
-        if (subscriptionId == 0 || subscriptionId > nextSubscriptionId) revert InvalidSubscription();
-
-        return subscriptions[subscriptionId];
-    }
-
     function charge(uint256 subscriptionId) external {
-        if (subscriptionId == 0 || subscriptionId >= nextSubscriptionId) revert InvalidSubscription();
+        if (subscriptionId == 0 || subscriptionId > nextSubscriptionId) revert InvalidSubscription();
 
         Subscription storage subscription = subscriptions[subscriptionId];
         
-        if(!subscription.isActive) revert SubscriptionNotActive();
+        if(subscription.status != SubscriptionStatus.ACTIVE) revert SubscriptionNotActive();
 
         Plan memory plan = plans[subscription.planId];
 
@@ -144,7 +135,41 @@ contract SubscriptionManager {
 
         subscription.nextPaymentDue = block.timestamp + plan.interval;
         
-        emit Charged(subscriptionId, subscription.planId, subscription.subscriber, plan.pricePerInterval, subscription.nextPaymentDue);
+        emit SubscriptionCharged(subscriptionId, subscription.planId, subscription.subscriber, plan.pricePerInterval, subscription.nextPaymentDue);
+    }
+
+    function cancelSubscription(uint256 subscriptionId) external {
+        if(subscriptionId == 0 || subscriptionId > nextSubscriptionId) revert InvalidSubscription();
+
+        Subscription storage subscription = subscriptions[subscriptionId];
+
+        if(subscription.status != SubscriptionStatus.ACTIVE) revert SubscriptionNotActive();
+
+        if(msg.sender != subscription.subscriber) revert Unauthorized();
+
+        subscription.status = SubscriptionStatus.CANCELLED;
+        
+        emit SubscriptionCancelled(subscriptionId, subscription.planId, subscription.subscriber);
+    }
+
+    function getPlan(uint256 planId) external view returns (Plan memory){
+        if (planId == 0 || planId > nextPlanId) revert InvalidPlan();
+
+        return plans[planId];
+    }
+
+    function getSubscription(uint256 subscriptionId) external view returns(Subscription memory) {
+        if (subscriptionId == 0 || subscriptionId > nextSubscriptionId) revert InvalidSubscription();
+
+        return subscriptions[subscriptionId];
+    }
+
+    function activatePlan(uint256 planId) external {
+        // TODO: Implement plan activation logic
+    }
+
+    function deactivatePlan(uint256 planId) external {
+        //TODO: Implement plan deactivation logic
     }
 /*
     function setPlanStatus(uint256 planId, bool active) external {
