@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-interface IERC20 {
-    function allowance(address owner, address spender) external view returns (uint256);
-    function balanceOf(address account) external view returns (uint256);
-    function transferFrom(address from, address to, uint256 value) external returns (bool);
-}
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @title SubscriptionManager
 /// @notice Base contract for recurring ERC20 subscriptions.
 contract SubscriptionManager {
+
+    uint256 public nextPlanId;
+    uint256 public nextSubscriptionId;
+
+    mapping(uint256 => Plan) private plans;
+    mapping(uint256 => Subscription) private subscriptions;
+    //mapping(uint256 planId => mapping(address subscriber => Subscription subscription)) public subscriptions;
+
+
     enum SubscriptionStatus {
         NONE,
         ACTIVE,
@@ -22,13 +27,15 @@ contract SubscriptionManager {
         address token;
         uint256 pricePerInterval;
         uint256 interval;
+        string metadataURI;
         bool active;
     }
 
     struct Subscription {
-        uint256 startedAt;
-        uint256 nextChargeAt;
-        SubscriptionStatus status;
+        uint256 planId;
+        address subscriber;
+        uint256 nextPaymentDue;
+        bool isActive;
     }
 
     error InvalidAddress();
@@ -40,42 +47,106 @@ contract SubscriptionManager {
     error AlreadySubscribed();
     error SubscriptionNotActive();
     error ChargeNotDue();
+    error InvalidSubscription();
+    error PaymentFailed();
 
     event PlanCreated(
         uint256 indexed planId,
         address indexed provider,
         address indexed token,
         uint256 pricePerInterval,
-        uint256 interval
+        uint256 interval,
+        string metadataURI
     );
     event PlanStatusUpdated(uint256 indexed planId, bool active);
-    event Subscribed(uint256 indexed planId, address indexed subscriber, uint256 nextChargeAt);
-    event SubscriptionCharged(uint256 indexed planId, address indexed subscriber, uint256 amount, uint256 nextChargeAt);
+    event Subscribed(uint256 indexed subscriptionId, uint256 indexed planId, address indexed subscriber, uint256 nextPaymentDue);
+    event SubscriptionCharged(uint256 indexed subscriptionId,uint256 indexed planId, address indexed subscriber, uint256 amount, uint256 nextChargeAt);
     event SubscriptionPastDue(uint256 indexed planId, address indexed subscriber);
     event SubscriptionCanceled(uint256 indexed planId, address indexed subscriber);
+    event Charged(uint256 indexed subscriptionId, uint256 indexed planId, address indexed subscriber, uint256 amount, uint256 nextPaymentDue);
 
-    uint256 public nextPlanId;
 
-    mapping(uint256 planId => Plan plan) public plans;
-    mapping(uint256 planId => mapping(address subscriber => Subscription subscription)) public subscriptions;
-
-    function createPlan(address token, uint256 pricePerInterval, uint256 interval) external returns (uint256 planId) {
+    function createPlan(address token, uint256 pricePerInterval, uint256 interval, string calldata metadataURI) external returns (uint256 planId) {
         if (token == address(0)) revert InvalidAddress();
         if (pricePerInterval == 0) revert InvalidAmount();
         if (interval == 0) revert InvalidInterval();
 
-        planId = nextPlanId++;
+        planId = ++nextPlanId;
         plans[planId] = Plan({
             provider: msg.sender,
             token: token,
             pricePerInterval: pricePerInterval,
             interval: interval,
+            metadataURI: metadataURI,
             active: true
         });
 
-        emit PlanCreated(planId, msg.sender, token, pricePerInterval, interval);
+        emit PlanCreated(planId, msg.sender, token, pricePerInterval, interval, metadataURI);
     }
 
+    function getPlan(uint256 planId) external view returns (Plan memory){
+        if (planId == 0 || planId > nextPlanId) revert InvalidPlan();
+
+        return plans[planId];
+    }
+
+    function subscribe(uint256 planId) external returns (uint256 subscriptionId) {
+        if (planId == 0 || planId > nextPlanId) revert InvalidPlan();
+
+        Plan memory plan = plans[planId];
+
+        if(!plan.active) revert PlanInactive();
+
+        bool success = IERC20(plan.token).transferFrom(msg.sender, plan.provider, plan.pricePerInterval);
+
+        if (!success) revert PaymentFailed();
+
+        subscriptionId = ++nextSubscriptionId;
+
+        uint256 nextPaymentDue = block.timestamp + plan.interval;
+
+        subscriptions[subscriptionId] = Subscription({
+            planId: planId,
+            subscriber: msg.sender,
+            nextPaymentDue: nextPaymentDue,
+            isActive: true
+        });
+
+        emit Subscribed(subscriptionId, planId, msg.sender, nextPaymentDue);
+    }
+
+    function getSubscription(uint256 subscriptionId) external view returns(Subscription memory) {
+        if (subscriptionId == 0 || subscriptionId > nextSubscriptionId) revert InvalidSubscription();
+
+        return subscriptions[subscriptionId];
+    }
+
+    function charge(uint256 subscriptionId) external {
+        if (subscriptionId == 0 || subscriptionId >= nextSubscriptionId) revert InvalidSubscription();
+
+        Subscription storage subscription = subscriptions[subscriptionId];
+        
+        if(!subscription.isActive) revert SubscriptionNotActive();
+
+        Plan memory plan = plans[subscription.planId];
+
+        if (msg.sender != plan.provider) revert Unauthorized();
+
+        if (block.timestamp < subscription.nextPaymentDue) revert ChargeNotDue();
+
+        bool success = IERC20(plan.token).transferFrom(
+            subscription.subscriber, 
+            plan.provider, 
+            plan.pricePerInterval
+        );
+        
+        if (!success) revert PaymentFailed();
+
+        subscription.nextPaymentDue = block.timestamp + plan.interval;
+        
+        emit Charged(subscriptionId, subscription.planId, subscription.subscriber, plan.pricePerInterval, subscription.nextPaymentDue);
+    }
+/*
     function setPlanStatus(uint256 planId, bool active) external {
         Plan storage plan = plans[planId];
         if (plan.provider == address(0)) revert InvalidPlan();
@@ -146,4 +217,5 @@ contract SubscriptionManager {
     function getSubscriptionStatus(uint256 planId, address subscriber) external view returns (SubscriptionStatus) {
         return subscriptions[planId][subscriber].status;
     }
+    */
 }
