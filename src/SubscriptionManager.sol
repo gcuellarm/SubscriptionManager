@@ -51,6 +51,8 @@ contract SubscriptionManager {
     error ChargeNotDue();
     error InvalidSubscription();
     error PaymentFailed();
+    error PlanAlreadyActive();
+    error PlanAlreadyInactive();
 
     event PlanCreated(
         uint256 indexed planId,
@@ -66,6 +68,8 @@ contract SubscriptionManager {
     event SubscriptionPastDue(uint256 indexed planId, address indexed subscriber);
     event SubscriptionCancelled(uint256 indexed subscriptionId, uint256 indexed planId, address indexed subscriber);
     event Charged(uint256 indexed subscriptionId, uint256 indexed planId, address indexed subscriber, uint256 amount, uint256 nextPaymentDue);
+    event PlanDeactivated(uint256 indexed planId, address indexed provider);
+    event PlanActivated(uint256 indexed planId, address indexed provider);
 
 
     function createPlan(address token, uint256 pricePerInterval, uint256 interval, string calldata metadataURI) external returns (uint256 planId) {
@@ -84,6 +88,34 @@ contract SubscriptionManager {
         });
 
         emit PlanCreated(planId, msg.sender, token, pricePerInterval, interval, metadataURI);
+    }
+
+    function deactivatePlan(uint256 planId) external {
+        if(planId == 0 || planId > nextPlanId) revert InvalidPlan();
+        
+        Plan storage plan = plans[planId];
+
+        if(msg.sender != plan.provider) revert Unauthorized();
+        if(!plan.active) revert PlanAlreadyInactive();
+        
+        plan.active = false;
+        
+        emit PlanDeactivated(planId, msg.sender);
+        emit PlanStatusUpdated(planId, false);
+    }
+
+    function activatePlan(uint256 planId) external {
+        if(planId == 0 || planId > nextPlanId) revert InvalidPlan();
+        
+        Plan storage plan = plans[planId];
+
+        if(msg.sender != plan.provider) revert Unauthorized();
+        if(plan.active) revert PlanAlreadyActive();
+        
+        plan.active = true;
+        
+        emit PlanActivated(planId, msg.sender);
+        emit PlanStatusUpdated(planId, true);
     }
 
     function subscribe(uint256 planId) external returns (uint256 subscriptionId) {
@@ -163,14 +195,7 @@ contract SubscriptionManager {
 
         return subscriptions[subscriptionId];
     }
-
-    function activatePlan(uint256 planId) external {
-        // TODO: Implement plan activation logic
-    }
-
-    function deactivatePlan(uint256 planId) external {
-        //TODO: Implement plan deactivation logic
-    }
+        
 /*
     function setPlanStatus(uint256 planId, bool active) external {
         Plan storage plan = plans[planId];

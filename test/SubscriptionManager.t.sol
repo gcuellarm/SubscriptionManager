@@ -46,6 +46,15 @@ contract SubscriptionManagerTest is Test {
         uint256 indexed planId,
         address indexed subscriber
     );
+    event PlanDeactivated(
+        uint256 indexed planId,
+        address indexed provider
+    );
+
+    event PlanActivated(
+        uint256 indexed planId,
+        address indexed provider
+    );
 
     function setUp() public {
         manager = new SubscriptionManager();
@@ -581,7 +590,55 @@ contract SubscriptionManagerTest is Test {
     //////////////////////////////////////////////////
     // Plan Activation/Deactivation Tests
     //////////////////////////////////////////////////
+    function test_DeactivatePlanSetsActiveFalse() public {
+        uint256 planId = _createPlan();
+
+        vm.prank(provider);
+        manager.deactivatePlan(planId);
+
+        SubscriptionManager.Plan memory plan = manager.getPlan(planId);
+        assertEq(plan.active, false);
+    }
+
+    function test_DeactivatePlanEmitsEvent() public {
+        uint256 planId = _createPlan();
+
+        vm.expectEmit(true, true, false, true);
+        emit PlanDeactivated(planId, provider);
+
+        vm.prank(provider);
+        manager.deactivatePlan(planId);
+    }
+
+    function test_ActivatePlanSetsActiveTrue() public {
+        uint256 planId = _createPlan();
+
+        vm.prank(provider);
+        manager.deactivatePlan(planId);
+        
+        vm.prank(provider);
+        manager.activatePlan(planId);
+        
+        SubscriptionManager.Plan memory plan = manager.getPlan(planId);
+
+        assertTrue(plan.active);
+    }
+
+    function test_ActivatePlanEmitsEvent() public {
+        uint256 planId = _createPlan();
+
+        vm.prank(provider);
+        manager.deactivatePlan(planId);
+
+        vm.expectEmit(true, true, false, true);
+        emit PlanActivated(planId, provider);
+
+        vm.prank(provider);
+        manager.activatePlan(planId);
+    }
+
     function test_DeactivatePlan() public {
+
         
     }
 
@@ -590,27 +647,67 @@ contract SubscriptionManagerTest is Test {
     }
 
     function test_RevertIf_NonProviderDeactivatesPlan() public {
-        
+        uint256 planId = _createPlan();
+
+        vm.prank(anotherProvider);
+        vm.expectRevert(SubscriptionManager.Unauthorized.selector);
+
+        manager.deactivatePlan(planId);
     }
 
     function test_RevertIf_NonProviderActivatesPlan() public {
+        uint256 planId = _createPlan();
+
+        vm.prank(provider);
+        manager.deactivatePlan(planId);
+
+        vm.prank(anotherProvider);
+        vm.expectRevert(SubscriptionManager.Unauthorized.selector);
         
+        manager.activatePlan(planId);
     }
 
     function test_RevertIf_DeactivateInvalidPlan() public {
+        vm.prank(provider);
+        vm.expectRevert(SubscriptionManager.InvalidPlan.selector);
         
+        manager.deactivatePlan(1);
     }
 
     function test_RevertIf_ActivateInvalidPlan() public {
-        
+        uint256 planId = _createPlan();
+
+        vm.prank(provider);
+        manager.deactivatePlan(planId);
+
+        vm.prank(provider);
+        vm.expectRevert(SubscriptionManager.InvalidPlan.selector);
+
+        manager.activatePlan(1);
     }
 
     function test_RevertIf_SubscribeToInactivePlan() public {
+        uint256 planId = _createPlan();
+
+        vm.prank(provider);
+        manager.deactivatePlan(planId);
+
+        vm.prank(subscriber);
+        vm.expectRevert(SubscriptionManager.PlanInactive.selector);
         
+        manager.subscribe(planId);
     }
 
     function test_ExistingSubscriptionCanStillBeChargedAfterPlanDeactivation() public {
         
+    }
+
+    function test_RevertIf_DeactivateAlreadyInacitvePlan() public {
+
+    }
+
+    function test_RevertIf_ActivateAlreadyActivePlan() public {
+
     }
 
 }
