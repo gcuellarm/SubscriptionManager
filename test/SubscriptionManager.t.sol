@@ -637,15 +637,6 @@ contract SubscriptionManagerTest is Test {
         manager.activatePlan(planId);
     }
 
-    function test_DeactivatePlan() public {
-
-        
-    }
-
-    function test_ActivatePlan() public {
-        
-    }
-
     function test_RevertIf_NonProviderDeactivatesPlan() public {
         uint256 planId = _createPlan();
 
@@ -675,15 +666,10 @@ contract SubscriptionManagerTest is Test {
     }
 
     function test_RevertIf_ActivateInvalidPlan() public {
-        uint256 planId = _createPlan();
-
-        vm.prank(provider);
-        manager.deactivatePlan(planId);
-
         vm.prank(provider);
         vm.expectRevert(SubscriptionManager.InvalidPlan.selector);
 
-        manager.activatePlan(1);
+        manager.activatePlan(999);
     }
 
     function test_RevertIf_SubscribeToInactivePlan() public {
@@ -699,15 +685,41 @@ contract SubscriptionManagerTest is Test {
     }
 
     function test_ExistingSubscriptionCanStillBeChargedAfterPlanDeactivation() public {
+        uint256 subscriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        vm.prank(provider);
+        manager.deactivatePlan(subscriptionId);
+
+        SubscriptionManager.Subscription memory subscription = manager.getSubscription(subscriptionId);
         
+        vm.warp(subscription.nextPaymentDue);
+
+        uint256 providerBalanceBefore = mockToken.balanceOf(provider);
+        vm.prank(provider);
+        manager.charge(subscriptionId);
+
+        assertEq(mockToken.balanceOf(provider), providerBalanceBefore + PRICE);
     }
 
     function test_RevertIf_DeactivateAlreadyInacitvePlan() public {
+        uint256 planId = _createPlan();
 
+        vm.prank(provider);
+        manager.deactivatePlan(planId);
+
+        vm.prank(provider);
+        vm.expectRevert(SubscriptionManager.PlanAlreadyInactive.selector);
+        
+        manager.deactivatePlan(planId);
     }
 
     function test_RevertIf_ActivateAlreadyActivePlan() public {
+        uint256 planId = _createPlan();
 
+        vm.prank(provider);
+        vm.expectRevert(SubscriptionManager.PlanAlreadyActive.selector);
+        
+        manager.activatePlan(planId);
     }
 
 }
