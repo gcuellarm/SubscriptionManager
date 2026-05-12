@@ -12,7 +12,7 @@ contract SubscriptionManager {
 
     mapping(uint256 => Plan) private plans;
     mapping(uint256 => Subscription) private subscriptions;
-    //mapping(uint256 planId => mapping(address subscriber => Subscription subscription)) public subscriptions;
+    mapping(uint256 planId => mapping(address subscriber => uint256 subscriptionId)) private subscriptionOf;
 
 
     enum SubscriptionStatus {
@@ -125,6 +125,8 @@ contract SubscriptionManager {
 
         if(!plan.active) revert PlanInactive();
 
+        if(subscriptionOf[planId][msg.sender] != 0) revert AlreadySubscribed();
+
         bool success = IERC20(plan.token).transferFrom(msg.sender, plan.provider, plan.pricePerInterval);
 
         if (!success) revert PaymentFailed();
@@ -140,6 +142,7 @@ contract SubscriptionManager {
             status: SubscriptionStatus.ACTIVE
         });
         
+        subscriptionOf[planId][msg.sender] = subscriptionId;
 
         emit Subscribed(subscriptionId, planId, msg.sender, nextPaymentDue);
     }
@@ -180,6 +183,8 @@ contract SubscriptionManager {
         if(msg.sender != subscription.subscriber) revert Unauthorized();
 
         subscription.status = SubscriptionStatus.CANCELLED;
+
+        subscriptionOf[subscription.planId][subscription.subscriber] = 0;
         
         emit SubscriptionCancelled(subscriptionId, subscription.planId, subscription.subscriber);
     }
@@ -195,77 +200,11 @@ contract SubscriptionManager {
 
         return subscriptions[subscriptionId];
     }
+
+    function getSubscriptionOf(uint256 planId, address subscriber) external view returns(uint256) {
+        if(planId == 0 || planId > nextPlanId) revert InvalidPlan();
+        if(subscriber == address(0)) revert InvalidAddress();
         
-/*
-    function setPlanStatus(uint256 planId, bool active) external {
-        Plan storage plan = plans[planId];
-        if (plan.provider == address(0)) revert InvalidPlan();
-        if (plan.provider != msg.sender) revert Unauthorized();
-
-        plan.active = active;
-        emit PlanStatusUpdated(planId, active);
+        return subscriptionOf[planId][subscriber];
     }
-
-    function subscribe(uint256 planId) external {
-        Plan memory plan = plans[planId];
-        if (plan.provider == address(0)) revert InvalidPlan();
-        if (!plan.active) revert PlanInactive();
-
-        Subscription storage currentSubscription = subscriptions[planId][msg.sender];
-        if (currentSubscription.status == SubscriptionStatus.ACTIVE) revert AlreadySubscribed();
-
-        uint256 nextChargeAt = block.timestamp + plan.interval;
-        subscriptions[planId][msg.sender] = Subscription({
-            startedAt: block.timestamp,
-            nextChargeAt: nextChargeAt,
-            status: SubscriptionStatus.ACTIVE
-        });
-
-        emit Subscribed(planId, msg.sender, nextChargeAt);
-    }
-
-    function chargeSubscription(uint256 planId, address subscriber) external returns (bool success) {
-        Plan memory plan = plans[planId];
-        if (plan.provider == address(0)) revert InvalidPlan();
-        if (plan.provider != msg.sender) revert Unauthorized();
-        if (!plan.active) revert PlanInactive();
-
-        Subscription storage userSubscription = subscriptions[planId][subscriber];
-        if (userSubscription.status != SubscriptionStatus.ACTIVE) revert SubscriptionNotActive();
-        if (block.timestamp < userSubscription.nextChargeAt) revert ChargeNotDue();
-
-        IERC20 token = IERC20(plan.token);
-        uint256 amount = plan.pricePerInterval;
-
-        if (token.allowance(subscriber, address(this)) < amount || token.balanceOf(subscriber) < amount) {
-            userSubscription.status = SubscriptionStatus.PAST_DUE;
-            emit SubscriptionPastDue(planId, subscriber);
-            return false;
-        }
-
-        success = token.transferFrom(subscriber, plan.provider, amount);
-        if (!success) {
-            userSubscription.status = SubscriptionStatus.PAST_DUE;
-            emit SubscriptionPastDue(planId, subscriber);
-            return false;
-        }
-
-        userSubscription.nextChargeAt += plan.interval;
-        emit SubscriptionCharged(planId, subscriber, amount, userSubscription.nextChargeAt);
-    }
-
-    function cancelSubscription(uint256 planId) external {
-        Subscription storage userSubscription = subscriptions[planId][msg.sender];
-        if (userSubscription.status != SubscriptionStatus.ACTIVE && userSubscription.status != SubscriptionStatus.PAST_DUE) {
-            revert SubscriptionNotActive();
-        }
-
-        userSubscription.status = SubscriptionStatus.CANCELED;
-        emit SubscriptionCanceled(planId, msg.sender);
-    }
-
-    function getSubscriptionStatus(uint256 planId, address subscriber) external view returns (SubscriptionStatus) {
-        return subscriptions[planId][subscriber].status;
-    }
-    */
 }

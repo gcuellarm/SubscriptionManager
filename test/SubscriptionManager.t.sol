@@ -722,4 +722,44 @@ contract SubscriptionManagerTest is Test {
         manager.activatePlan(planId);
     }
 
+    function test_GetSubscriptionOfReturnsSubscriptionId() public {
+
+    }
+
+    function test_RevertIf_UserSubscribesTwiceToSamePlan() public {
+        
+    }
+    
+    function test_UserCanSubscribeAgainAfterCancelling() public {
+        
+    }
+    
+    function test_SameUserCanSubscribeToDifferentPlans() public {
+        
+    }
+    
+    function test_DifferentUsersCanSubscribeToSamePlan() public {
+        
+    }
+    
+    function test_GetSubscriptionOfReturnsZeroAfterCancellation() public {
+        
+    }
+    
+    /*function test_RevertIf_GetSubscriptionOfInvalidPlan() public {
+        
+    }
+    
+    function test_RevertIf_GetSubscriptionOfZeroAddress() public {
+        
+    }*/
+    
+    function test_RevertIf_GetSubscriptionOfInvalidPlan() public {
+        
+    }
+    
+    function test_RevertIf_GetSubscriptionOfZeroAddress() public {
+        
+    }
+
 }
