@@ -723,43 +723,132 @@ contract SubscriptionManagerTest is Test {
     }
 
     function test_GetSubscriptionOfReturnsSubscriptionId() public {
+        uint256 planId = _createPlan();
+        
+        _fundAndApprove(subscriber, PRICE);
 
+        vm.prank(subscriber);
+        uint256 subscriptionId = manager.subscribe(planId);
+
+        uint256 storedSubscriptionId = manager.getSubscriptionOf(planId, subscriber);
+        assertEq(storedSubscriptionId, subscriptionId);
     }
 
     function test_RevertIf_UserSubscribesTwiceToSamePlan() public {
-        
+        uint256 planId = _createPlan();
+
+        _fundAndApprove(subscriber, PRICE * 2);
+
+        vm.prank(subscriber);
+        manager.subscribe(planId);
+
+        vm.prank(subscriber);
+        vm.expectRevert(SubscriptionManager.AlreadySubscribed.selector);
+        manager.subscribe(planId);
     }
     
     function test_UserCanSubscribeAgainAfterCancelling() public {
-        
+        uint256 planId = _createPlan();
+
+        _fundAndApprove(subscriber, PRICE * 2);
+
+        vm.prank(subscriber);
+        uint256 subscriptionId1 = manager.subscribe(planId);
+
+        vm.prank(subscriber);
+        manager.cancelSubscription(subscriptionId1);
+
+        vm.prank(subscriber);
+        uint256 subscriptionId2 = manager.subscribe(planId);
+
+        assertEq(subscriptionId1, 1);
+        assertEq(subscriptionId2, 2);
+
+        assertEq(manager.getSubscriptionOf(planId, subscriber), subscriptionId2);
     }
     
     function test_SameUserCanSubscribeToDifferentPlans() public {
+        vm.startPrank(provider);
+
+        uint256 planId1 = manager.createPlan(
+            address(mockToken), 
+            PRICE, 
+            INTERVAL, 
+            "metadataURI1"
+        );
+
+        uint256 planId2 = manager.createPlan(
+            address(mockToken), 
+            PRICE, 
+            INTERVAL, 
+            "metadataURI2"
+        );
+
+        vm.stopPrank();
+
+        _fundAndApprove(subscriber, PRICE * 2);
+
+        vm.prank(subscriber);
+        uint256 subscriptionIdPlan1 = manager.subscribe(planId1);
+
+        vm.prank(subscriber);
+        uint256 subscriptionIdPlan2 = manager.subscribe(planId2);
         
+        assertEq(subscriptionIdPlan1, 1);
+        assertEq(subscriptionIdPlan2, 2);
+        
+        assertEq(manager.getSubscriptionOf(planId1, subscriber), subscriptionIdPlan1);
+        assertEq(manager.getSubscriptionOf(planId2, subscriber), subscriptionIdPlan2);
     }
     
     function test_DifferentUsersCanSubscribeToSamePlan() public {
-        
+        uint256 planId = _createPlan();
+
+        _fundAndApprove(subscriber, PRICE);
+        _fundAndApprove(anotherSubscriber, PRICE);
+
+        vm.prank(subscriber);
+        uint256 subscriptionId1 = manager.subscribe(planId);
+
+        vm.prank(anotherSubscriber);
+        uint256 subscriptionId2 = manager.subscribe(planId);
+
+        assertEq(subscriptionId1, 1);
+        assertEq(subscriptionId2, 2);
+
+        assertEq(manager.getSubscriptionOf(planId, subscriber), subscriptionId1);
+        assertEq(manager.getSubscriptionOf(planId, anotherSubscriber), subscriptionId2);
     }
     
     function test_GetSubscriptionOfReturnsZeroAfterCancellation() public {
+        uint256 planId = _createPlan();
         
+        _fundAndApprove(subscriber, PRICE);
+        
+        vm.prank(subscriber);
+        uint256 subscriptionId = manager.subscribe(planId);
+        
+        // Cancel subscription
+        vm.prank(subscriber);
+        manager.cancelSubscription(subscriptionId);
+        
+        // Get subscription should return 0
+        assertEq(manager.getSubscriptionOf(planId, subscriber), 0);
     }
-    
-    /*function test_RevertIf_GetSubscriptionOfInvalidPlan() public {
-        
-    }
-    
-    function test_RevertIf_GetSubscriptionOfZeroAddress() public {
-        
-    }*/
     
     function test_RevertIf_GetSubscriptionOfInvalidPlan() public {
-        
+        _fundAndApprove(subscriber, PRICE);
+
+        vm.prank(subscriber);
+        vm.expectRevert(SubscriptionManager.InvalidPlan.selector);
+        manager.getSubscriptionOf(1, subscriber);
     }
     
     function test_RevertIf_GetSubscriptionOfZeroAddress() public {
+        _createPlan();
         
+        vm.expectRevert(SubscriptionManager.InvalidAddress.selector);
+        manager.getSubscriptionOf(1, address(0));
     }
 
 }
