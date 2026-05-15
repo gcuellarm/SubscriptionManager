@@ -56,6 +56,13 @@ contract SubscriptionManagerTest is Test {
         address indexed provider
     );
 
+    event SubscriptionMarkedPastDue(
+        uint256 indexed subscriptionId,
+        uint256 indexed planId,
+        address indexed subscriber,
+        uint256 dueTimestamp
+    );
+
     function setUp() public {
         manager = new SubscriptionManager();
         mockToken = new MockERC20("Mock USDC", "mUSDC", 6);
@@ -849,6 +856,119 @@ contract SubscriptionManagerTest is Test {
         
         vm.expectRevert(SubscriptionManager.InvalidAddress.selector);
         manager.getSubscriptionOf(1, address(0));
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // markPastDue Tests
+    ////////////////////////////////////////////////////////////////////////////////
+
+    function test_MarkPastDueSetsStatus() public {
+        uint256 subscriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        SubscriptionManager.Subscription memory subscriptionBefore = manager.getSubscription(subscriptionId);
+
+        vm.warp(subscriptionBefore.nextPaymentDue);
+
+        vm.prank(provider);
+        manager.markPastDue(subscriptionId);
+
+        SubscriptionManager.Subscription memory subscriptionAfter = manager.getSubscription(subscriptionId);
+
+        assertEq(uint256(subscriptionAfter.status), uint256(SubscriptionManager.SubscriptionStatus.PAST_DUE));      
+    }
+
+    function test_MarkPastDueEmitsEvent() public {
+        uint256 subscriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        SubscriptionManager.Subscription memory subscription = manager.getSubscription(subscriptionId);
+
+        vm.warp(subscription.nextPaymentDue);
+
+        vm.expectEmit(true, true, true, true);
+
+        emit SubscriptionMarkedPastDue(
+            subscriptionId,
+            subscription.planId,
+            subscriber,
+            subscription.nextPaymentDue
+        );
+
+        vm.prank(provider);
+        manager.markPastDue(subscriptionId);
+    }
+    
+    function test_RevertIf_MarkPastDueInvalidSubscription() public {
+        vm.prank(provider);
+        vm.expectRevert(SubscriptionManager.InvalidSubscription.selector);
+        manager.markPastDue(1);
+    }
+    
+    function test_RevertIf_NonProviderMarksPastDue() public {
+        uint256 subscriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        SubscriptionManager.Subscription memory subscription = manager.getSubscription(subscriptionId);
+
+        vm.warp(subscription.nextPaymentDue);
+
+        vm.prank(anotherProvider);
+        vm.expectRevert(SubscriptionManager.Unauthorized.selector);
+
+        manager.markPastDue(subscriptionId);
+    }
+    
+    function test_RevertIf_MarkPastDueTooEarly() public {
+        uint256 subscriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        vm.prank(provider);
+        vm.expectRevert(SubscriptionManager.ChargeNotDue.selector);
+        
+        manager.markPastDue(subscriptionId);
+    }
+    
+    function test_RevertIf_MarkPastDueCancelledSubscription() public {
+        uint256 subscriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        vm.prank(subscriber);
+        manager.cancelSubscription(subscriptionId);
+
+        SubscriptionManager.Subscription memory subscription = manager.getSubscription(subscriptionId);
+
+        vm.warp(subscription.nextPaymentDue);
+
+        vm.prank(provider);
+        vm.expectRevert(SubscriptionManager.SubscriptionNotActive.selector);
+
+        manager.markPastDue(subscriptionId);
+    }
+    
+    function test_RevertIf_MarkPastDueAlreadyPastDue() public {
+        uint256 subscriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        SubscriptionManager.Subscription memory subscription = manager.getSubscription(subscriptionId);
+
+        vm.warp(subscription.nextPaymentDue);
+
+        vm.prank(provider);
+        manager.markPastDue(subscriptionId);
+
+        vm.prank(provider);
+        vm.expectRevert(SubscriptionManager.SubscriptionNotActive.selector);
+        manager.markPastDue(subscriptionId);
+    }
+
+    function test_RevertIf_ChargePastDueSubscription() public {
+        uint256 subscriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        SubscriptionManager.Subscription memory subscription = manager.getSubscription(subscriptionId);
+
+        vm.warp(subscription.nextPaymentDue);
+
+        vm.prank(provider);
+        manager.markPastDue(subscriptionId);
+
+        vm.prank(provider);
+        vm.expectRevert(SubscriptionManager.SubscriptionNotActive.selector);
+        manager.charge(subscriptionId);
     }
 
 }

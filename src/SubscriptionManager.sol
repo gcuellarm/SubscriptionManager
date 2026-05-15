@@ -70,6 +70,7 @@ contract SubscriptionManager {
     event Charged(uint256 indexed subscriptionId, uint256 indexed planId, address indexed subscriber, uint256 amount, uint256 nextPaymentDue);
     event PlanDeactivated(uint256 indexed planId, address indexed provider);
     event PlanActivated(uint256 indexed planId, address indexed provider);
+    event SubscriptionMarkedPastDue(uint256 indexed subscriptionId, uint256 indexed planId, address indexed subscriber, uint256 dueTimestamp);
 
 
     function createPlan(address token, uint256 pricePerInterval, uint256 interval, string calldata metadataURI) external returns (uint256 planId) {
@@ -171,6 +172,23 @@ contract SubscriptionManager {
         subscription.nextPaymentDue = block.timestamp + plan.interval;
         
         emit SubscriptionCharged(subscriptionId, subscription.planId, subscription.subscriber, plan.pricePerInterval, subscription.nextPaymentDue);
+    }
+
+    function markPastDue(uint256 subscriptionId) external {
+        if(subscriptionId == 0 || subscriptionId > nextSubscriptionId) revert InvalidSubscription();
+
+        Subscription storage subscription = subscriptions[subscriptionId];
+
+        if(subscription.status != SubscriptionStatus.ACTIVE) revert SubscriptionNotActive();
+
+        Plan memory plan = plans[subscription.planId];
+
+        if(msg.sender != plan.provider) revert Unauthorized();
+        if (block.timestamp < subscription.nextPaymentDue) revert ChargeNotDue();
+
+        subscription.status = SubscriptionStatus.PAST_DUE;
+        
+        emit SubscriptionMarkedPastDue(subscriptionId, subscription.planId, subscription.subscriber, subscription.nextPaymentDue);
     }
 
     function cancelSubscription(uint256 subscriptionId) external {

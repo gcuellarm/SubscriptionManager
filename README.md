@@ -1,109 +1,116 @@
 # SubscriptionManager
 
-Base Solidity protocol for managing recurring subscriptions with ERC20 tokens.
+A Foundry-based Solidity project for managing recurring ERC20 subscriptions.
 
-## Current status
+## Overview
 
-The project has been **initialized with a functional base**, not with the complete final implementation.
+`SubscriptionManager` is a base on-chain subscription protocol where:
 
-It currently includes:
+- a provider creates a plan,
+- a user subscribes with an ERC20 token,
+- the first payment is charged immediately on subscription,
+- future payments can be charged periodically by the provider.
 
-- base `SubscriptionManager` contract
-- plan creation and plan activation/deactivation
-- user subscription to a plan
-- recurring charges using `transferFrom` on an ERC20 token
-- transition to `PAST_DUE` status when there is not enough balance or allowance
-- subscription cancellation
-- minimal deploy script
-- base tests for plan creation and subscription
+This repository is intentionally positioned as a **base implementation**. It is useful for learning, iteration, and hardening, but it is **not production-ready** and has **not been audited**.
 
-## Protocol idea
+## Current implementation status
 
-A provider publishes a plan:
+The current contract already supports the core lifecycle:
 
-- ERC20 token to charge
-- price per period
+- plan creation with token, price, interval, and metadata URI
+- provider-controlled plan activation and deactivation
+- user subscription with an upfront ERC20 payment
+- recurring provider-triggered charges once a payment is due
+- manual transition to `PAST_DUE` when a due subscription needs to be flagged
+- user cancellation
+- subscription lookup helpers
+- unit tests for the main happy paths and key revert scenarios
+
+## How it works
+
+### Plan lifecycle
+
+A provider creates a plan with:
+
+- `token`: ERC20 token used for billing
+- `pricePerInterval`: amount charged every billing cycle
+- `interval`: billing period in seconds
+- `metadataURI`: off-chain metadata pointer for plan details
+
+Plans are active by default and can later be deactivated or reactivated by their provider.
+
+### Subscription lifecycle
+
+When a user subscribes:
+
+1. the contract pulls the **first payment immediately** using `transferFrom`,
+2. a subscription record is created,
+3. `nextPaymentDue` is set to `block.timestamp + interval`.
+
+When the due date is reached, the provider can call `charge(subscriptionId)` to collect the next payment.
+
+If the subscription should be flagged as overdue after the due date, the provider can call `markPastDue(subscriptionId)`.
+
+A subscriber can cancel their own active subscription at any time.
+
+## Contract API
+
+Main contract: `src/SubscriptionManager.sol`
+
+### Write functions
+
+- `createPlan(address token, uint256 pricePerInterval, uint256 interval, string calldata metadataURI)`
+- `deactivatePlan(uint256 planId)`
+- `activatePlan(uint256 planId)`
+- `subscribe(uint256 planId)`
+- `charge(uint256 subscriptionId)`
+- `markPastDue(uint256 subscriptionId)`
+- `cancelSubscription(uint256 subscriptionId)`
+
+### Read functions
+
+- `getPlan(uint256 planId)`
+- `getSubscription(uint256 subscriptionId)`
+- `getSubscriptionOf(uint256 planId, address subscriber)`
+- `nextPlanId()`
+- `nextSubscriptionId()`
+
+## State model
+
+### Plan
+
+A plan stores:
+
+- provider address
+- ERC20 token address
+- price per billing interval
 - billing interval
+- metadata URI
+- active flag
 
-Then a user subscribes and authorizes the contract. When `nextChargeAt` is reached, the provider can execute the charge.
+### Subscription
 
-## Base architecture
+A subscription stores:
 
-### Main entities
+- plan ID
+- subscriber address
+- next payment due timestamp
+- subscription status
 
-#### Plan
+### Subscription statuses
 
-Represents the offer published by a provider.
-
-Main fields:
-
-- `provider`
-- `token`
-- `pricePerInterval`
-- `interval`
-- `active`
-
-#### Subscription
-
-Represents the relationship between a user and a plan.
-
-Main fields:
-
-- `startedAt`
-- `nextChargeAt`
-- `status`
-
-#### Statuses
+The enum currently includes:
 
 - `NONE`
 - `ACTIVE`
 - `PAST_DUE`
-- `CANCELED`
+- `EXPIRED`
+- `PAUSED`
+- `CANCELLED`
 
-## Current contract
+At the moment, the implemented flows actively use `ACTIVE`, `PAST_DUE`, and `CANCELLED`. The additional statuses exist in the contract but are not yet part of a full lifecycle implementation.
 
-File: `src/SubscriptionManager.sol`
-
-### Available functions
-
-- `createPlan(address token, uint256 pricePerInterval, uint256 interval)`
-- `setPlanStatus(uint256 planId, bool active)`
-- `subscribe(uint256 planId)`
-- `chargeSubscription(uint256 planId, address subscriber)`
-  - reverts with `ChargeNotDue()` if the charge is not due yet
-- `cancelSubscription(uint256 planId)`
-- `getSubscriptionStatus(uint256 planId, address subscriber)`
-
-## Decisions made in this base
-
-### 1. Charges are executed by the provider
-
-This follows the model described in `Task.md`: the user authorizes the contract, but the provider triggers the charge.
-
-### 2. If the charge fails, the subscription moves to `PAST_DUE`
-
-Instead of assuming everything simply reverts and nothing else happens, this base already models the debt/non-payment state.
-
-### 3. I have not added a protocol fee or factory yet
-
-That is the right decision FOR THIS STAGE. First, the core flow needs to be properly closed before adding extra complexity.
-
-## What is missing
-
-This still does NOT cover:
-
-- reactivation of expired subscriptions
-- protocol fee
-- plan or provider factory
-- multiple plan system, such as premium/basic/etc.
-- more granular pause controls
-- charge retry control
-- fuzz tests
-- invariant tests
-- ERC20 mocks for complete charge scenarios
-- security hardening and gas optimization
-
-## Project structure
+## Repository structure
 
 ```txt
 src/
@@ -112,33 +119,69 @@ script/
   SubscriptionManager.s.sol
 test/
   SubscriptionManager.t.sol
+  mocks/
+    MockERC20.sol
 ```
 
 ## Development
 
-### Install dependencies
+### Dependencies
 
-This repo is already prepared to use `forge-std` as a submodule.
+This project uses:
 
-### Tests
+- Foundry
+- OpenZeppelin Contracts (via git submodule/remapping)
+- forge-std
+
+If needed, initialize submodules before working with the repo:
+
+```bash
+git submodule update --init --recursive
+```
+
+### Run tests
 
 ```bash
 forge test
 ```
 
-### Formatting
+### Format
 
 ```bash
 forge fmt
 ```
 
-## Recommended next step
+## Current limitations
 
-The healthy next step is NOT to add random features.
+This base version does **not** yet provide a complete production-grade subscription system. For example:
 
-First, this needs to be done:
+- no protocol fee model
+- no factory layer for plan deployment or provider isolation
+- no automatic retry or dunning strategy
+- no reactivation/resume flow for overdue subscriptions
+- no fully implemented `PAUSED` / `EXPIRED` lifecycle
+- no automation layer for scheduled execution
+- no fuzz or invariant test suite yet
+- no audit or security review yet
 
-1. add a `MockERC20`
-2. test the full `chargeSubscription` flow
-3. cover `PAST_DUE`
-4. only then evaluate fees, factory, and invariants
+## Future direction
+
+The next meaningful iterations should prioritize **making the existing flow safer and more robust before adding complexity**.
+
+That means focusing on hardening areas such as:
+
+- payment-failure handling and overdue strategy
+- lifecycle edge cases and state-transition guarantees
+- broader testing depth, especially fuzz and invariant coverage
+- security review of permissions, assumptions, and external token interactions
+
+Only after that should larger product features such as protocol fees, factories, or richer plan systems be expanded.
+
+## Notes
+
+This repository is a good base for:
+
+- practicing Solidity architecture and state-machine design
+- learning recurring-payment flows with ERC20 tokens
+- discussing tradeoffs around pull-based subscription billing in Web3
+- evolving a prototype into a safer protocol through iterative hardening
