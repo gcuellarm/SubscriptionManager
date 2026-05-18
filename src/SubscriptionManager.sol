@@ -48,6 +48,7 @@ contract SubscriptionManager {
     error PlanInactive();
     error AlreadySubscribed();
     error SubscriptionNotActive();
+    error SubscriptionNotPastDue();
     error ChargeNotDue();
     error InvalidSubscription();
     error PaymentFailed();
@@ -71,6 +72,7 @@ contract SubscriptionManager {
     event PlanDeactivated(uint256 indexed planId, address indexed provider);
     event PlanActivated(uint256 indexed planId, address indexed provider);
     event SubscriptionMarkedPastDue(uint256 indexed subscriptionId, uint256 indexed planId, address indexed subscriber, uint256 dueTimestamp);
+    event SubscriptionReactivated(uint256 indexed subscriptionId, uint256 indexed planId, address indexed subscriber, uint256 amount, uint256 nextPaymentDue);
 
 
     function createPlan(address token, uint256 pricePerInterval, uint256 interval, string calldata metadataURI) external returns (uint256 planId) {
@@ -189,6 +191,31 @@ contract SubscriptionManager {
         subscription.status = SubscriptionStatus.PAST_DUE;
         
         emit SubscriptionMarkedPastDue(subscriptionId, subscription.planId, subscription.subscriber, subscription.nextPaymentDue);
+    }
+
+    function reactivatePastDueSubscription(uint256 subscriptionId) external {
+        if (subscriptionId == 0 || subscriptionId > nextSubscriptionId) revert InvalidSubscription();
+        
+        Subscription storage subscription = subscriptions[subscriptionId];
+
+        if (subscription.status != SubscriptionStatus.PAST_DUE) revert SubscriptionNotPastDue();
+        
+        if (msg.sender != subscription.subscriber) revert Unauthorized();
+
+        Plan memory plan = plans[subscription.planId];
+
+        bool success = IERC20(plan.token).transferFrom(
+            msg.sender, 
+            plan.provider, 
+            plan.pricePerInterval
+            );
+
+        if (!success) revert PaymentFailed();
+
+        subscription.status = SubscriptionStatus.ACTIVE;
+        subscription.nextPaymentDue = block.timestamp + plan.interval;
+        
+        emit SubscriptionReactivated(subscriptionId, subscription.planId, subscription.subscriber, plan.pricePerInterval, subscription.nextPaymentDue);
     }
 
     function cancelSubscription(uint256 subscriptionId) external {

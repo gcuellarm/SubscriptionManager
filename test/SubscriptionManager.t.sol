@@ -63,6 +63,14 @@ contract SubscriptionManagerTest is Test {
         uint256 dueTimestamp
     );
 
+    event SubscriptionReactivated(
+        uint256 indexed subscriptionId,
+        uint256 indexed planId,
+        address indexed subscriber,
+        uint256 amount,
+        uint256 nextPaymentDue
+    );
+
     function setUp() public {
         manager = new SubscriptionManager();
         mockToken = new MockERC20("Mock USDC", "mUSDC", 6);
@@ -88,6 +96,38 @@ contract SubscriptionManagerTest is Test {
 
         vm.prank(user);
         mockToken.approve(address(manager), amount);
+    }
+
+    function _createPastDueSubscription() internal returns (uint256 subscriptionId) {
+        subscriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        SubscriptionManager.Subscription memory subscription =
+            manager.getSubscription(subscriptionId);
+
+        vm.warp(subscription.nextPaymentDue);
+
+        vm.prank(provider);
+        manager.markPastDue(subscriptionId);
+    }
+
+    function _createPastDueSubscriptionWithoutRemainingAllowance() internal returns (uint256 subscriptionId){
+        uint256 planId = _createPlan();
+
+        mockToken.mint(subscriber, PRICE);
+
+        vm.prank(subscriber);
+        mockToken.approve(address(manager), PRICE);
+
+        vm.prank(subscriber);
+        subscriptionId = manager.subscribe(planId);
+
+        SubscriptionManager.Subscription memory subscription =
+            manager.getSubscription(subscriptionId);
+
+        vm.warp(subscription.nextPaymentDue);
+
+        vm.prank(provider);
+        manager.markPastDue(subscriptionId);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -969,6 +1009,142 @@ contract SubscriptionManagerTest is Test {
         vm.prank(provider);
         vm.expectRevert(SubscriptionManager.SubscriptionNotActive.selector);
         manager.charge(subscriptionId);
+    }
+
+    /////////////////////////////////////////////////////////////////////
+    // Reactivate Past Due Subscription Tests
+    /////////////////////////////////////////////////////////////////////
+    function test_ReactivatePastDueSubscriptionSetsActive() public {
+        uint256 subscriptionId = _createPastDueSubscription();
+        
+        vm.prank(subscriber);
+        manager.reactivatePastDueSubscription(subscriptionId);
+
+        SubscriptionManager.Subscription memory subscription = manager.getSubscription(subscriptionId);
+
+        assertEq(uint256(subscription.status), uint256(SubscriptionManager.SubscriptionStatus.ACTIVE));
+    }
+
+    function test_ReactivatePastDueSubscriptionTransfersPayment() public {
+        uint256 subscriptionId = _createPastDueSubscription();
+
+        uint256 providerBalanceBefore = mockToken.balanceOf(provider);
+        uint256 subscriberBalanceBefore = mockToken.balanceOf(subscriber);
+        
+        vm.prank(subscriber);
+        manager.reactivatePastDueSubscription(subscriptionId);
+
+        assertEq(mockToken.balanceOf(provider), providerBalanceBefore + PRICE);
+        assertEq(mockToken.balanceOf(subscriber), subscriberBalanceBefore - PRICE);
+
+
+    }
+
+    function test_ReactivatePastDueSubscriptionUpdatesNextPaymentDue() public {
+        uint256 subscriptionId = _createPastDueSubscription();
+        
+        SubscriptionManager.Subscription memory subscriptionBefore = manager.getSubscription(subscriptionId);
+        uint256 expectedNextPaymentDueBefore = subscriptionBefore.nextPaymentDue;
+        
+        vm.prank(subscriber);
+        manager.reactivatePastDueSubscription(subscriptionId);
+        
+        SubscriptionManager.Subscription memory subscriptionAfter = manager.getSubscription(subscriptionId);
+        uint256 nextPaymentDueAfter = subscriptionAfter.nextPaymentDue;
+        
+        assertEq(nextPaymentDueAfter, expectedNextPaymentDueBefore + INTERVAL);
+    }
+
+    function test_ReactivatePastDueSubscriptionEmitsEvent() public {
+        uint256 subscriptionId = _createPastDueSubscription();
+
+        SubscriptionManager.Subscription memory subscription =
+            manager.getSubscription(subscriptionId);
+
+        uint256 expectedNextPaymentDue = subscription.nextPaymentDue + INTERVAL;
+
+        vm.expectEmit(true, true, true, true);
+
+        emit SubscriptionReactivated(
+            subscriptionId,
+            subscription.planId,
+            subscriber,
+            PRICE,
+            expectedNextPaymentDue
+        );
+
+        vm.prank(subscriber);
+        manager.reactivatePastDueSubscription(subscriptionId);
+    }
+
+    function test_RevertIf_ReactivateInvalidSubscription() public {
+        vm.prank(subscriber);
+        vm.expectRevert(SubscriptionManager.InvalidSubscription.selector);
+
+        manager.reactivatePastDueSubscription(1);
+    }
+
+    function test_RevertIf_ReactivateSubscriptionNotPastDue() public {
+        uint256 subcriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        vm.prank(subscriber);
+        vm.expectRevert(SubscriptionManager.SubscriptionNotPastDue.selector);
+
+        manager.reactivatePastDueSubscription(subcriptionId);
+    }
+
+    function test_RevertIf_NonSubscriberReactivates() public {
+        uint256 subscriptionId = _createPastDueSubscription();
+
+        vm.prank(anotherSubscriber);
+        vm.expectRevert(SubscriptionManager.Unauthorized.selector);
+
+        manager.reactivatePastDueSubscription(subscriptionId);
+    }
+
+    function test_RevertIf_ReactivateWithoutAllowance() public {
+        uint256 subscriptionId = _createPastDueSubscriptionWithoutRemainingAllowance();
+
+        mockToken.mint(subscriber, PRICE);
+
+        vm.prank(subscriber);
+        vm.expectRevert();
+
+        manager.reactivatePastDueSubscription(subscriptionId);
+    }
+
+    function test_RevertIf_ReactivateWithoutEnoughBalance() public {
+        uint256 subscriptionId = _createPastDueSubscriptionWithoutRemainingAllowance();
+
+        vm.prank(subscriber);
+        mockToken.approve(address(manager), PRICE - 1);
+
+        vm.expectRevert();
+        vm.prank(subscriber);
+
+        manager.reactivatePastDueSubscription(subscriptionId);
+    }
+
+    function test_CanChargeAfterPastDueReactivation() public {
+        uint256 subscriptionId = _createPastDueSubscription();
+
+        vm.prank(subscriber);
+        manager.reactivatePastDueSubscription(subscriptionId);
+
+        SubscriptionManager.Subscription memory subscription = manager.getSubscription(subscriptionId);
+
+        _fundAndApprove(subscriber, PRICE);
+
+        vm.warp(subscription.nextPaymentDue);
+
+        vm.prank(provider);
+        manager.charge(subscriptionId);
+
+        SubscriptionManager.Subscription memory subscriptionAfterCharge = manager.getSubscription(subscriptionId);
+
+        assertEq(uint256(subscriptionAfterCharge.status), uint256(SubscriptionManager.SubscriptionStatus.ACTIVE));
+
+        assertEq(subscriptionAfterCharge.nextPaymentDue, subscription.nextPaymentDue + INTERVAL);
     }
 
 }
