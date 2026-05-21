@@ -13,9 +13,12 @@ contract SubscriptionManagerTest is Test {
     address internal anotherProvider = address(0xFACE);
     address internal subscriber = address(0xDEAD);
     address internal anotherSubscriber = address(0xAAAA);
+    address internal treasury = address(0xCAFE);
 
     uint256 public constant PRICE = 10e6;
     uint256 public constant INTERVAL = 30 days;
+    uint256 public constant PROTOCOL_FEE_BPS = 100; // 1%
+    uint256 public constant BPS = 10_000;
 
     event PlanCreated(
         uint256 indexed planId,
@@ -71,8 +74,15 @@ contract SubscriptionManagerTest is Test {
         uint256 nextPaymentDue
     );
 
+    event ProtocolFeeCollected(
+        address indexed token,
+        address indexed payer,
+        address indexed provider,
+        uint256 amount
+    );
+
     function setUp() public {
-        manager = new SubscriptionManager();
+        manager = new SubscriptionManager(treasury, PROTOCOL_FEE_BPS);
         mockToken = new MockERC20("Mock USDC", "mUSDC", 6);
     }
 
@@ -128,6 +138,14 @@ contract SubscriptionManagerTest is Test {
 
         vm.prank(provider);
         manager.markPastDue(subscriptionId);
+    }
+
+    function _feeAmount(uint256 amount) internal pure returns (uint256) {
+        return (amount * PROTOCOL_FEE_BPS) / BPS;
+    }
+
+    function _providerAmount(uint256 amount) internal pure returns (uint256) {
+        return amount - _feeAmount(amount);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -305,15 +323,18 @@ contract SubscriptionManagerTest is Test {
         
         uint256 providerBalanceBefore = mockToken.balanceOf(provider);
         uint256 subscriberBalanceBefore = mockToken.balanceOf(subscriber);
+        uint256 treasuryBalanceBefore = mockToken.balanceOf(treasury);
 
         vm.prank(subscriber);
         manager.subscribe(planId);
 
         uint256 providerBalanceAfter = mockToken.balanceOf(provider);
         uint256 subscriberBalanceAfter = mockToken.balanceOf(subscriber);
+        uint256 treasuryBalanceAfter = mockToken.balanceOf(treasury);
 
-        assertEq(providerBalanceAfter, providerBalanceBefore + PRICE);
+        assertEq(providerBalanceAfter, providerBalanceBefore + _providerAmount(PRICE));
         assertEq(subscriberBalanceAfter, subscriberBalanceBefore - PRICE);
+        assertEq(treasuryBalanceAfter, treasuryBalanceBefore + _feeAmount(PRICE));
     }
 
     function test_SubscribeEmitsEvent() public{
@@ -443,7 +464,8 @@ contract SubscriptionManagerTest is Test {
         vm.prank(anotherSubscriber);
         manager.subscribe(planId);
 
-        assertEq(mockToken.balanceOf(provider), PRICE * 2);
+        assertEq(mockToken.balanceOf(provider), _providerAmount(PRICE) * 2);
+        assertEq(mockToken.balanceOf(treasury), _feeAmount(PRICE) * 2);
     }
     // =============================================================================
     // CHARGE FUNCTION TESTS
@@ -464,14 +486,16 @@ contract SubscriptionManagerTest is Test {
 
         uint256 providerBalanceBefore = mockToken.balanceOf(provider);
         uint256 subscriberBalanceBefore = mockToken.balanceOf(subscriber);
+        uint256 treasuryBalanceBefore = mockToken.balanceOf(treasury);
 
         vm.warp(block.timestamp + INTERVAL);
 
         vm.prank(provider);
         manager.charge(subscriptionId);
 
-        assertEq(mockToken.balanceOf(provider), providerBalanceBefore + PRICE);
+        assertEq(mockToken.balanceOf(provider), providerBalanceBefore + _providerAmount(PRICE));
         assertEq(mockToken.balanceOf(subscriber), subscriberBalanceBefore - PRICE);
+        assertEq(mockToken.balanceOf(treasury), treasuryBalanceBefore + _feeAmount(PRICE));
     }
 
     function test_ChargeUpdatesNextPaymentDue() public {
@@ -742,10 +766,12 @@ contract SubscriptionManagerTest is Test {
         vm.warp(subscription.nextPaymentDue);
 
         uint256 providerBalanceBefore = mockToken.balanceOf(provider);
+        uint256 treasuryBalanceBefore = mockToken.balanceOf(treasury);
         vm.prank(provider);
         manager.charge(subscriptionId);
 
-        assertEq(mockToken.balanceOf(provider), providerBalanceBefore + PRICE);
+        assertEq(mockToken.balanceOf(provider), providerBalanceBefore + _providerAmount(PRICE));
+        assertEq(mockToken.balanceOf(treasury), treasuryBalanceBefore + _feeAmount(PRICE));
     }
 
     function test_RevertIf_DeactivateAlreadyInacitvePlan() public {
@@ -1030,14 +1056,14 @@ contract SubscriptionManagerTest is Test {
 
         uint256 providerBalanceBefore = mockToken.balanceOf(provider);
         uint256 subscriberBalanceBefore = mockToken.balanceOf(subscriber);
+        uint256 treasuryBalanceBefore = mockToken.balanceOf(treasury);
         
         vm.prank(subscriber);
         manager.reactivatePastDueSubscription(subscriptionId);
 
-        assertEq(mockToken.balanceOf(provider), providerBalanceBefore + PRICE);
+        assertEq(mockToken.balanceOf(provider), providerBalanceBefore + _providerAmount(PRICE));
         assertEq(mockToken.balanceOf(subscriber), subscriberBalanceBefore - PRICE);
-
-
+        assertEq(mockToken.balanceOf(treasury), treasuryBalanceBefore + _feeAmount(PRICE));
     }
 
     function test_ReactivatePastDueSubscriptionUpdatesNextPaymentDue() public {
@@ -1145,6 +1171,107 @@ contract SubscriptionManagerTest is Test {
         assertEq(uint256(subscriptionAfterCharge.status), uint256(SubscriptionManager.SubscriptionStatus.ACTIVE));
 
         assertEq(subscriptionAfterCharge.nextPaymentDue, subscription.nextPaymentDue + INTERVAL);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // PROTOCOL FEE TESTS
+    ////////////////////////////////////////////////////////////////////////////////
+
+    function test_ConstructorSetsTreasuryAndProtocolFee() public {
+        assertEq(manager.treasury(), treasury);
+
+        assertEq(manager.protocolFeeBps(), PROTOCOL_FEE_BPS);
+    }
+
+    function test_RevertIf_ConstructorTreasuryIsZero() public {
+        vm.expectRevert(SubscriptionManager.InvalidAddress.selector);
+
+        new SubscriptionManager(address(0), PROTOCOL_FEE_BPS);
+    }
+
+    function test_RevertIf_ConstructorFeeTooHigh() public {
+        vm.expectRevert(SubscriptionManager.InvalidFee.selector);
+
+        new SubscriptionManager(treasury, BPS + 1);
+    }
+
+    function test_SubscribeSplitsPaymentBetweenProviderAndTreasury() public {
+        uint256 planId = _createPlan();
+
+        _fundAndApprove(subscriber, PRICE);
+
+        vm.prank(subscriber);
+        manager.subscribe(planId);
+
+        assertEq(mockToken.balanceOf(provider), _providerAmount(PRICE));
+        assertEq(mockToken.balanceOf(treasury), _feeAmount(PRICE));
+        assertEq(mockToken.balanceOf(subscriber), 0);
+    }
+
+    function test_ChargeSplitsPaymentBetweenProviderAndTreasury() public {
+        uint256 subscriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        SubscriptionManager.Subscription memory subscription = manager.getSubscription(subscriptionId);
+
+        vm.warp(subscription.nextPaymentDue);
+
+        uint256 providerBalanceBefore = mockToken.balanceOf(provider);
+        uint256 treasuryBalanceBefore = mockToken.balanceOf(treasury);
+        
+        vm.prank(provider);
+        manager.charge(subscriptionId);
+
+        assertEq(mockToken.balanceOf(provider), providerBalanceBefore + _providerAmount(PRICE));
+        assertEq(mockToken.balanceOf(treasury), treasuryBalanceBefore + _feeAmount(PRICE));        
+    }
+
+    function test_ReactivateSplitsPaymentBetweenProviderAndTreasury() public {
+        uint256 subscriptionId = _createPastDueSubscription();
+
+        uint256 providerBalanceBefore = mockToken.balanceOf(provider);
+        uint256 treasuryBalanceBefore = mockToken.balanceOf(treasury);
+
+        vm.prank(subscriber);
+        manager.reactivatePastDueSubscription(subscriptionId);
+
+        assertEq(mockToken.balanceOf(provider), providerBalanceBefore + _providerAmount(PRICE));
+        assertEq(mockToken.balanceOf(treasury), treasuryBalanceBefore + _feeAmount(PRICE));
+    }
+
+    function test_ProtocolFeeCollectedEmittedOnSubscribe() public {
+        uint256 planId = _createPlan();
+
+        _fundAndApprove(subscriber, PRICE);
+
+        vm.expectEmit(true, true, true, true);
+
+        emit ProtocolFeeCollected(
+            address(mockToken),
+            subscriber,
+            treasury,
+            _feeAmount(PRICE)
+        );
+
+        vm.prank(subscriber);
+        manager.subscribe(planId);
+    }
+
+    function test_NoProtocolFeeCollectedWhenFeeIsZero() public {
+        SubscriptionManager zeroFeeManager = new SubscriptionManager(treasury, 0);
+
+        vm.prank(provider);
+        uint256 planId = zeroFeeManager.createPlan(address(mockToken), PRICE, INTERVAL, "metadataURI");
+
+        mockToken.mint(subscriber, PRICE);
+
+        vm.startPrank(subscriber);
+        mockToken.approve(address(zeroFeeManager), PRICE);
+
+        zeroFeeManager.subscribe(planId);
+        vm.stopPrank();
+        
+        assertEq(mockToken.balanceOf(provider), PRICE);
+        assertEq(mockToken.balanceOf(treasury), 0);
     }
 
 }

@@ -7,8 +7,12 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /// @notice Base contract for recurring ERC20 subscriptions.
 contract SubscriptionManager {
 
+    uint256 public constant BPS = 10_000;
+
     uint256 public nextPlanId;
     uint256 public nextSubscriptionId;
+    address public treasury;
+    uint256 public protocolFeeBps;
 
     mapping(uint256 => Plan) private plans;
     mapping(uint256 => Subscription) private subscriptions;
@@ -54,6 +58,7 @@ contract SubscriptionManager {
     error PaymentFailed();
     error PlanAlreadyActive();
     error PlanAlreadyInactive();
+    error InvalidFee();
 
     event PlanCreated(
         uint256 indexed planId,
@@ -73,6 +78,15 @@ contract SubscriptionManager {
     event PlanActivated(uint256 indexed planId, address indexed provider);
     event SubscriptionMarkedPastDue(uint256 indexed subscriptionId, uint256 indexed planId, address indexed subscriber, uint256 dueTimestamp);
     event SubscriptionReactivated(uint256 indexed subscriptionId, uint256 indexed planId, address indexed subscriber, uint256 amount, uint256 nextPaymentDue);
+    event ProtocolFeeCollected(address indexed token, address indexed payer, address indexed treasury, uint256 amount);
+
+    constructor(address _treasury, uint256 _protocolFeeBps) {
+        if (_treasury == address(0)) revert InvalidAddress();
+        if (_protocolFeeBps > 10000) revert InvalidFee();
+
+        treasury = _treasury;
+        protocolFeeBps = _protocolFeeBps;
+    }
 
 
     function createPlan(address token, uint256 pricePerInterval, uint256 interval, string calldata metadataURI) external returns (uint256 planId) {
@@ -130,9 +144,7 @@ contract SubscriptionManager {
 
         if(subscriptionOf[planId][msg.sender] != 0) revert AlreadySubscribed();
 
-        bool success = IERC20(plan.token).transferFrom(msg.sender, plan.provider, plan.pricePerInterval);
-
-        if (!success) revert PaymentFailed();
+        _processPayment(plan.token, msg.sender, plan.provider, plan.pricePerInterval);
 
         subscriptionId = ++nextSubscriptionId;
 
@@ -163,13 +175,7 @@ contract SubscriptionManager {
 
         if (block.timestamp < subscription.nextPaymentDue) revert ChargeNotDue();
 
-        bool success = IERC20(plan.token).transferFrom(
-            subscription.subscriber, 
-            plan.provider, 
-            plan.pricePerInterval
-        );
-        
-        if (!success) revert PaymentFailed();
+        _processPayment(plan.token, subscription.subscriber, plan.provider, plan.pricePerInterval);
 
         subscription.nextPaymentDue = block.timestamp + plan.interval;
         
@@ -204,13 +210,7 @@ contract SubscriptionManager {
 
         Plan memory plan = plans[subscription.planId];
 
-        bool success = IERC20(plan.token).transferFrom(
-            msg.sender, 
-            plan.provider, 
-            plan.pricePerInterval
-            );
-
-        if (!success) revert PaymentFailed();
+        _processPayment(plan.token, msg.sender, plan.provider, plan.pricePerInterval);
 
         subscription.status = SubscriptionStatus.ACTIVE;
         subscription.nextPaymentDue = block.timestamp + plan.interval;
@@ -251,5 +251,29 @@ contract SubscriptionManager {
         if(subscriber == address(0)) revert InvalidAddress();
         
         return subscriptionOf[planId][subscriber];
+    }
+
+    // Internal Functions
+
+    function _splitPayment(uint256 amount) internal view returns (uint256 providerAmount, uint256 feeAmount) {
+        feeAmount = (amount * protocolFeeBps) / BPS;
+        providerAmount = amount - feeAmount;
+    }
+
+    function _processPayment(address token, address payer, address provider, uint256 amount) internal returns (uint256 providerAmount, uint256 feeAmount) {
+        (providerAmount, feeAmount) = _splitPayment(amount);
+
+        bool providerSuccess = IERC20(token).transferFrom(payer, provider, providerAmount);
+
+        if(!providerSuccess) revert PaymentFailed();
+
+        if(feeAmount > 0) {
+            bool feeSuccess = IERC20(token).transferFrom(payer, treasury, feeAmount);
+            if(!feeSuccess) revert PaymentFailed();
+        }
+
+        if(!providerSuccess) revert PaymentFailed();
+
+        emit ProtocolFeeCollected(token, payer, treasury, feeAmount);
     }
 }
