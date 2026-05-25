@@ -2,10 +2,12 @@
 pragma solidity ^0.8.24;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title SubscriptionManager
 /// @notice Base contract for recurring ERC20 subscriptions.
 contract SubscriptionManager {
+    using SafeERC20 for IERC20;
 
     uint256 public constant BPS = 10_000;
 
@@ -55,7 +57,6 @@ contract SubscriptionManager {
     error SubscriptionNotPastDue();
     error ChargeNotDue();
     error InvalidSubscription();
-    error PaymentFailed();
     error PlanAlreadyActive();
     error PlanAlreadyInactive();
     error InvalidFee();
@@ -263,16 +264,11 @@ contract SubscriptionManager {
     function _processPayment(address token, address payer, address provider, uint256 amount) internal returns (uint256 providerAmount, uint256 feeAmount) {
         (providerAmount, feeAmount) = _splitPayment(amount);
 
-        bool providerSuccess = IERC20(token).transferFrom(payer, provider, providerAmount);
-
-        if(!providerSuccess) revert PaymentFailed();
+        IERC20(token).safeTransferFrom(payer, provider, providerAmount);
 
         if(feeAmount > 0) {
-            bool feeSuccess = IERC20(token).transferFrom(payer, treasury, feeAmount);
-            if(!feeSuccess) revert PaymentFailed();
+            IERC20(token).safeTransferFrom(payer, treasury, feeAmount);
         }
-
-        if(!providerSuccess) revert PaymentFailed();
 
         emit ProtocolFeeCollected(token, payer, treasury, feeAmount);
     }

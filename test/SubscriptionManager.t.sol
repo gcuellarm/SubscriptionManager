@@ -1274,4 +1274,40 @@ contract SubscriptionManagerTest is Test {
         assertEq(mockToken.balanceOf(treasury), 0);
     }
 
+    ////////////////////////////////////////////////////////////////////////////////
+    // Functions work with SafeERC20 update
+    ////////////////////////////////////////////////////////////////////////////////
+
+    function test_SubscribeWorksWithSafeErc20() public{
+        uint256 planId = _createPlan();
+
+        _fundAndApprove(subscriber, PRICE);
+
+        vm.prank(subscriber);
+        uint256 suscriptionId = manager.subscribe(planId);
+
+        SubscriptionManager.Subscription memory subscription = manager.getSubscription(suscriptionId);
+
+        assertEq(subscription.subscriber, subscriber);
+        assertEq(subscription.planId, planId);
+        assertTrue(subscription.status == SubscriptionManager.SubscriptionStatus.ACTIVE);
+    }
+
+    function test_ChargeWorksWithSafeERC20() public {
+        uint256 subscriptionId = _createSubscriptionWithBalanceAndAllowance(PRICE * 2);
+
+        SubscriptionManager.Subscription memory subscription = manager.getSubscription(subscriptionId);
+
+        vm.warp(subscription.nextPaymentDue);
+
+        vm.prank(provider);
+        manager.charge(subscriptionId);
+
+        SubscriptionManager.Subscription memory subscriptionAfter = manager.getSubscription(subscriptionId);
+        
+        assertEq(subscriptionAfter.nextPaymentDue, subscription.nextPaymentDue + INTERVAL);
+        
+
+    }
+
 }
