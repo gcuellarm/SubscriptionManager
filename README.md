@@ -24,11 +24,26 @@ The current contract already supports the core lifecycle:
 - user subscription with an upfront ERC20 payment
 - recurring provider-triggered charges once a payment is due
 - manual transition to `PAST_DUE` when a due subscription needs to be flagged
-- subscriber-driven reactivation from `PAST_DUE`
-- user cancellation
+- subscriber-driven reactivation from `PAST_DUE` while the plan remains active
+- user cancellation from either `ACTIVE` or `PAST_DUE`
 - automatic payment split between provider and treasury on subscribe / charge / reactivation
+- ERC20 transfers through OpenZeppelin `SafeERC20`
 - subscription lookup helpers
-- unit tests for the main happy paths, fee flow, and key revert scenarios
+- unit, fuzz, and invariant tests for lifecycle transitions, fee flow, and key revert scenarios
+
+## Iterative development highlights
+
+The project has been expanded incrementally rather than built as a single final implementation:
+
+1. established the Foundry project and the first contract structure,
+2. added plan creation, subscription, and recurring charge flows,
+3. introduced cancellation and provider-controlled plan activation,
+4. added subscriber-to-plan lookup helpers,
+5. implemented `PAST_DUE` marking and subscriber-driven recovery,
+6. introduced treasury-based protocol fee splitting,
+7. migrated ERC20 transfers to OpenZeppelin `SafeERC20`,
+8. expanded testing with fuzz and stateful invariant suites,
+9. hardened lifecycle rules so `PAST_DUE` subscriptions can be cancelled and cannot be reactivated after plan deactivation.
 
 ## How it works
 
@@ -70,9 +85,9 @@ When the due date is reached, the provider can call `charge(subscriptionId)` to 
 
 If the subscription should be flagged as overdue after the due date, the provider can call `markPastDue(subscriptionId)`.
 
-A `PAST_DUE` subscriber can restore the subscription by calling `reactivatePastDueSubscription(subscriptionId)`, which charges one interval again and resets `nextPaymentDue`.
+A `PAST_DUE` subscriber can restore the subscription by calling `reactivatePastDueSubscription(subscriptionId)`, which charges one interval again and resets `nextPaymentDue`. Reactivation is rejected if the provider has deactivated the plan.
 
-A subscriber can cancel their own active subscription at any time.
+A subscriber can cancel their own `ACTIVE` or `PAST_DUE` subscription at any time.
 
 ## Contract API
 
@@ -156,6 +171,10 @@ script/
   SubscriptionManager.s.sol
 test/
   SubscriptionManager.t.sol
+  SubscriptionManagerFuzz.t.sol
+  invariants/
+    SubscriptionManagerHandler.sol
+    SubscriptionManagerInvariant.t.sol
   mocks/
     MockERC20.sol
 ```
@@ -216,7 +235,6 @@ This base version does **not** yet provide a complete production-grade subscript
 - no automatic recovery flow beyond manual subscriber reactivation
 - no fully implemented `PAUSED` / `EXPIRED` lifecycle
 - no automation layer for scheduled execution
-- no fuzz or invariant test suite yet
 - no audit or security review yet
 
 ## Future direction
