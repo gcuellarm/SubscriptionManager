@@ -618,6 +618,31 @@ contract SubscriptionManagerTest is Test {
         manager.cancelSubscription(subscriptionId);
     }
 
+    function test_CancelPastDueSubscriptionSetsCancelledAndClearsRegistration() public {
+        uint256 subscriptionId = _createPastDueSubscription();
+
+        SubscriptionManager.Subscription memory subscriptionBefore =
+            manager.getSubscription(subscriptionId);
+
+        vm.prank(subscriber);
+        manager.cancelSubscription(subscriptionId);
+
+        SubscriptionManager.Subscription memory subscriptionAfter =
+            manager.getSubscription(subscriptionId);
+
+        assertEq(
+            uint256(subscriptionAfter.status),
+            uint256(SubscriptionManager.SubscriptionStatus.CANCELLED)
+        );
+        assertEq(
+            manager.getSubscriptionOf(
+                subscriptionBefore.planId,
+                subscriptionBefore.subscriber
+            ),
+            0
+        );
+    }
+
     function test_RevertIf_CancelInvalidSubscription() public {
         vm.prank(subscriber);
         vm.expectRevert(SubscriptionManager.InvalidSubscription.selector);
@@ -1124,6 +1149,21 @@ contract SubscriptionManagerTest is Test {
 
         vm.prank(anotherSubscriber);
         vm.expectRevert(SubscriptionManager.Unauthorized.selector);
+
+        manager.reactivatePastDueSubscription(subscriptionId);
+    }
+
+    function test_RevertIf_ReactivatePastDueSubscriptionWithInactivePlan() public {
+        uint256 subscriptionId = _createPastDueSubscription();
+
+        SubscriptionManager.Subscription memory subscription =
+            manager.getSubscription(subscriptionId);
+
+        vm.prank(provider);
+        manager.deactivatePlan(subscription.planId);
+
+        vm.prank(subscriber);
+        vm.expectRevert(SubscriptionManager.PlanInactive.selector);
 
         manager.reactivatePastDueSubscription(subscriptionId);
     }

@@ -81,6 +81,9 @@ contract SubscriptionManager {
     event SubscriptionReactivated(uint256 indexed subscriptionId, uint256 indexed planId, address indexed subscriber, uint256 amount, uint256 nextPaymentDue);
     event ProtocolFeeCollected(address indexed token, address indexed payer, address indexed treasury, uint256 amount);
 
+    /// @notice Initializes the manager with the protocol treasury and fee.
+    /// @param _treasury Address that receives protocol fees.
+    /// @param _protocolFeeBps Protocol fee expressed in basis points.
     constructor(address _treasury, uint256 _protocolFeeBps) {
         if (_treasury == address(0)) revert InvalidAddress();
         if (_protocolFeeBps > 10000) revert InvalidFee();
@@ -90,6 +93,12 @@ contract SubscriptionManager {
     }
 
 
+    /// @notice Creates an active recurring-payment plan for the caller.
+    /// @param token ERC20 token used to collect payments.
+    /// @param pricePerInterval Amount charged during each billing interval.
+    /// @param interval Billing interval duration in seconds.
+    /// @param metadataURI Off-chain metadata URI associated with the plan.
+    /// @return planId Identifier assigned to the newly created plan.
     function createPlan(address token, uint256 pricePerInterval, uint256 interval, string calldata metadataURI) external returns (uint256 planId) {
         if (token == address(0)) revert InvalidAddress();
         if (pricePerInterval == 0) revert InvalidAmount();
@@ -108,6 +117,8 @@ contract SubscriptionManager {
         emit PlanCreated(planId, msg.sender, token, pricePerInterval, interval, metadataURI);
     }
 
+    /// @notice Deactivates a plan and prevents new subscriptions or overdue reactivations.
+    /// @param planId Identifier of the plan to deactivate.
     function deactivatePlan(uint256 planId) external {
         if(planId == 0 || planId > nextPlanId) revert InvalidPlan();
         
@@ -122,6 +133,8 @@ contract SubscriptionManager {
         emit PlanStatusUpdated(planId, false);
     }
 
+    /// @notice Reactivates a previously deactivated plan.
+    /// @param planId Identifier of the plan to activate.
     function activatePlan(uint256 planId) external {
         if(planId == 0 || planId > nextPlanId) revert InvalidPlan();
         
@@ -136,6 +149,9 @@ contract SubscriptionManager {
         emit PlanStatusUpdated(planId, true);
     }
 
+    /// @notice Subscribes the caller to an active plan and collects the first payment.
+    /// @param planId Identifier of the plan to subscribe to.
+    /// @return subscriptionId Identifier assigned to the newly created subscription.
     function subscribe(uint256 planId) external returns (uint256 subscriptionId) {
         if (planId == 0 || planId > nextPlanId) revert InvalidPlan();
 
@@ -163,6 +179,8 @@ contract SubscriptionManager {
         emit Subscribed(subscriptionId, planId, msg.sender, nextPaymentDue);
     }
 
+    /// @notice Charges an active subscription after its next payment becomes due.
+    /// @param subscriptionId Identifier of the subscription to charge.
     function charge(uint256 subscriptionId) external {
         if (subscriptionId == 0 || subscriptionId > nextSubscriptionId) revert InvalidSubscription();
 
@@ -183,6 +201,8 @@ contract SubscriptionManager {
         emit SubscriptionCharged(subscriptionId, subscription.planId, subscription.subscriber, plan.pricePerInterval, subscription.nextPaymentDue);
     }
 
+    /// @notice Marks an overdue active subscription as past due.
+    /// @param subscriptionId Identifier of the subscription to mark as past due.
     function markPastDue(uint256 subscriptionId) external {
         if(subscriptionId == 0 || subscriptionId > nextSubscriptionId) revert InvalidSubscription();
 
@@ -200,6 +220,8 @@ contract SubscriptionManager {
         emit SubscriptionMarkedPastDue(subscriptionId, subscription.planId, subscription.subscriber, subscription.nextPaymentDue);
     }
 
+    /// @notice Reactivates a past-due subscription while its plan remains active.
+    /// @param subscriptionId Identifier of the subscription to reactivate.
     function reactivatePastDueSubscription(uint256 subscriptionId) external {
         if (subscriptionId == 0 || subscriptionId > nextSubscriptionId) revert InvalidSubscription();
         
@@ -211,6 +233,8 @@ contract SubscriptionManager {
 
         Plan memory plan = plans[subscription.planId];
 
+        if (!plan.active) revert PlanInactive();
+
         _processPayment(plan.token, msg.sender, plan.provider, plan.pricePerInterval);
 
         subscription.status = SubscriptionStatus.ACTIVE;
@@ -219,12 +243,17 @@ contract SubscriptionManager {
         emit SubscriptionReactivated(subscriptionId, subscription.planId, subscription.subscriber, plan.pricePerInterval, subscription.nextPaymentDue);
     }
 
+    /// @notice Cancels an active or past-due subscription owned by the caller.
+    /// @param subscriptionId Identifier of the subscription to cancel.
     function cancelSubscription(uint256 subscriptionId) external {
         if(subscriptionId == 0 || subscriptionId > nextSubscriptionId) revert InvalidSubscription();
 
         Subscription storage subscription = subscriptions[subscriptionId];
 
-        if(subscription.status != SubscriptionStatus.ACTIVE) revert SubscriptionNotActive();
+        if(
+            subscription.status != SubscriptionStatus.ACTIVE &&
+            subscription.status != SubscriptionStatus.PAST_DUE
+        ) revert SubscriptionNotActive();
 
         if(msg.sender != subscription.subscriber) revert Unauthorized();
 
@@ -235,19 +264,29 @@ contract SubscriptionManager {
         emit SubscriptionCancelled(subscriptionId, subscription.planId, subscription.subscriber);
     }
 
+    /// @notice Returns the stored data for an existing plan.
+    /// @param planId Identifier of the plan to read.
+    /// @return plan Stored plan data.
     function getPlan(uint256 planId) external view returns (Plan memory){
         if (planId == 0 || planId > nextPlanId) revert InvalidPlan();
 
         return plans[planId];
     }
 
+    /// @notice Returns the stored data for an existing subscription.
+    /// @param subscriptionId Identifier of the subscription to read.
+    /// @return subscription Stored subscription data.
     function getSubscription(uint256 subscriptionId) external view returns(Subscription memory) {
         if (subscriptionId == 0 || subscriptionId > nextSubscriptionId) revert InvalidSubscription();
 
         return subscriptions[subscriptionId];
     }
 
-    function getSubscriptionOf(uint256 planId, address subscriber) external view returns(uint256) {
+    /// @notice Returns the current subscription identifier for a subscriber and plan.
+    /// @param planId Identifier of the plan to query.
+    /// @param subscriber Address of the subscriber to query.
+    /// @return subscriptionId Current subscription identifier, or zero if none exists.
+    function getSubscriptionOf(uint256 planId, address subscriber) external view returns(uint256 subscriptionId) {
         if(planId == 0 || planId > nextPlanId) revert InvalidPlan();
         if(subscriber == address(0)) revert InvalidAddress();
         
@@ -256,11 +295,22 @@ contract SubscriptionManager {
 
     // Internal Functions
 
+    /// @notice Splits a payment into provider proceeds and protocol fees.
+    /// @param amount Total amount to split.
+    /// @return providerAmount Amount assigned to the provider.
+    /// @return feeAmount Amount assigned to the protocol treasury.
     function _splitPayment(uint256 amount) internal view returns (uint256 providerAmount, uint256 feeAmount) {
         feeAmount = (amount * protocolFeeBps) / BPS;
         providerAmount = amount - feeAmount;
     }
 
+    /// @notice Transfers provider proceeds and protocol fees from a payer.
+    /// @param token ERC20 token used for payment.
+    /// @param payer Address paying for the subscription interval.
+    /// @param provider Address receiving the provider proceeds.
+    /// @param amount Total amount charged to the payer.
+    /// @return providerAmount Amount transferred to the provider.
+    /// @return feeAmount Amount transferred to the protocol treasury.
     function _processPayment(address token, address payer, address provider, uint256 amount) internal returns (uint256 providerAmount, uint256 feeAmount) {
         (providerAmount, feeAmount) = _splitPayment(amount);
 
